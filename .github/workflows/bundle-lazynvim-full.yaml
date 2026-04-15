@@ -17,31 +17,31 @@ jobs:
 
       - name: Build Full Package in CentOS7
         run: |
+          # 注意：此处的 run 块缩进必须严格一致
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/work_dir" \
             -w /work_dir \
             centos:7 \
             /bin/bash -c "
-              # 显式声明基础系统路径，防止 command not found
+              # 1. 强制初始化系统路径，解决 'git is not executable'
               export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
               set -euo pipefail
               
-              # 1. 修复 CentOS 7 基础源 (使用 Vault)
+              # 2. 修复 CentOS 7 基础源 (使用 Vault)
               rm -f /etc/yum.repos.d/*.repo
               printf '[base]\nname=CentOS-7 Base\nbaseurl=http://vault.centos.org/7.9.2009/os/x86_64/\nenabled=1\ngpgcheck=0\n' > /etc/yum.repos.d/CentOS-Base.repo
               
-              # 2. 安装现代版 Git (通过 wandisco 源)
+              # 3. 安装 Git 2.x 和基础压缩工具
               yum install -y http://opensource.wandisco.com/centos/7/git/x86_64/wandisco-git-release-7-2.noarch.rpm || true
               yum install -y curl tar gzip gcc gcc-c++ make git findutils
               
-              echo 'Git version:' \$(git --version)
-              
-              # 3. 下载并准备 Neovim v0.11.7
+              # 4. 下载并解压缩 Neovim v0.11.7
               curl -LO https://github.com/neovim/neovim-releases/releases/download/v0.11.7/nvim-linux-x86_64.tar.gz
               tar xzf nvim-linux-x86_64.tar.gz
+              # 将 nvim 加入当前容器 PATH
               export PATH='/work_dir/nvim-linux-x86_64/bin:\$PATH'
               
-              # 4. 准备 Neovim 环境路径
+              # 5. 准备 Neovim 环境
               export HOME=/root
               export XDG_CONFIG_HOME=\$HOME/.config
               export XDG_DATA_HOME=\$HOME/.local/share
@@ -50,27 +50,28 @@ jobs:
               /usr/bin/mkdir -p \$XDG_CONFIG_HOME
               /usr/bin/cp -r /work_dir/. \$XDG_CONFIG_HOME/nvim
               
-              # 清理构建残留
+              # 清理不需要打包的二进制
               /usr/bin/rm -rf \$XDG_CONFIG_HOME/nvim/nvim-linux-x86_64*
               /usr/bin/rm -rf \$XDG_CONFIG_HOME/nvim/dist
 
-              # 5. 自动化同步与 Tree-sitter 编译
+              # 6. 自动化同步 (禁用 Git Filter 以解决老旧环境兼容性)
               export NVIM_LAZY_NO_FILTER=1
+              # 使用绝对路径确保基础工具可被 nvim 内部调用
               nvim --headless '+Lazy! sync' +qa
               nvim --headless '+TSUpdateSync' +qa
 
-              # 6. 打包
+              # 7. 导出产物
               /usr/bin/mkdir -p /work_dir/dist
               cd \$HOME
               /usr/bin/tar -czf /work_dir/dist/lazynvim-centos7-bundle.tar.gz .config/nvim .local/share/nvim .local/state/nvim
-              echo '--- 离线包构建成功 ---'
+              echo '构建成功！'
             "
 
       - name: Create and upload Release
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name || format('manual-{0}', github.run_number) }}
+          TAG: ${{ github.ref_name || format('manual-bundle-{0}', github.run_number) }}
         run: |
-          gh release create "${TAG}" --title "LazyVim C7 Bundle (${TAG})" --notes "Neovim v0.11.7 CentOS 7 兼容包" || true
+          gh release create "${TAG}" --title "LazyVim Bundle (${TAG})" --notes "CentOS 7 + Neovim v0.11.7 完整包" || true
           gh release upload "${TAG}" dist/lazynvim-centos7-bundle.tar.gz --clobber
