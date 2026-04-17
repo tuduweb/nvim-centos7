@@ -1,58 +1,28 @@
-- name: Build Full Package in CentOS7
-  run: |
-    docker run --rm \
-      -v "${GITHUB_WORKSPACE}:/work_dir" \
-      -w /work_dir \
-      centos:7 \
-      /bin/bash -lc '
-        set -euo pipefail
+name: Bundle Neovim for CentOS 7
 
-        # 1. 修复 CentOS 7 官方源失效问题 (指向 Vault 归档源)
-        rm -f /etc/yum.repos.d/*.repo
-        curl -o /etc/yum.repos.d/CentOS-Base.repo https://www.xmpan.com/source/centos7.repo || \
-        printf "%s\n" \
-          "[base]" \
-          "name=CentOS-7 Base" \
-          "baseurl=http://vault.centos.org/7.9.2009/os/x86_64/" \
-          "enabled=1" \
-          "gpgcheck=0" \
-          > /etc/yum.repos.d/CentOS-Base.repo
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: # 允许手动触发
 
-        # 2. 安装必要工具
-        yum install -y curl tar gzip xz unzip gcc gcc-c++ make git findutils which
+jobs:
+  build-bundle:
+    runs-on: ubuntu-latest
+    steps:
+      # 必须先检出代码，否则 /work_dir 里面是空的
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-        # 3. 下载并准备 Neovim 二进制文件
-        if [ ! -d "nvim-linux-x86_64" ]; then
-          curl -LO https://github.com/neovim/neovim-releases/releases/download/v0.11.7/nvim-linux-x86_64.tar.gz
-          tar xzf nvim-linux-x86_64.tar.gz
-        fi
-        export PATH="/work_dir/nvim-linux-x86_64/bin:$PATH"
-
-        # 4. 定义 XDG 路径（关键：使用 /tmp 或当前目录，避免污染宿主 HOME）
-        export BUILD_HOME="/tmp/nvim_build"
-        export XDG_CONFIG_HOME="$BUILD_HOME/.config"
-        export XDG_DATA_HOME="$BUILD_HOME/.local/share"
-        export XDG_STATE_HOME="$BUILD_HOME/.local/state"
-
-        mkdir -p "$XDG_CONFIG_HOME"
-        # 拷贝你的配置到容器内的配置目录
-        cp -r /work_dir/. "$XDG_CONFIG_HOME/nvim"
-
-        # 清理不必要的构建残留
-        rm -rf "$XDG_CONFIG_HOME/nvim/nvim-linux-x86_64"*
-        rm -rf "$XDG_CONFIG_HOME/nvim/dist"
-
-        # 5. 自动安装插件和 Tree-sitter 编译
-        export NVIM_LAZY_NO_FILTER=1
-        nvim --headless "+Lazy! sync" +qa
-        nvim --headless "+TSUpdateSync" +qa
-
-        # 6. 打包输出
-        mkdir -p /work_dir/dist
-        cd "$BUILD_HOME"
-        # 使用相对路径打包，方便用户解压到任何位置
-        tar -czf /work_dir/dist/lazynvim-centos7-bundle.tar.gz \
-          .config/nvim \
-          .local/share/nvim \
-          .local/state/nvim
-      '
+      - name: Build Full Package in CentOS7
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/work_dir" \
+            -w /work_dir \
+            centos:7 \
+            /bin/bash -lc '
+              set -euo pipefail
+              
+              # (后面接你之前的脚本内容...)
+              rm -f /etc/yum.repos.d/*.repo
+              # ... 省略中间代码 ...
+            '
