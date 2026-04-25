@@ -15,11 +15,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. 拉代码
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. CentOS7 构建
       - name: Build Full Package in CentOS7
         run: |
           docker run --rm \
@@ -29,7 +27,7 @@ jobs:
             /bin/bash -lc '
               set -euo pipefail
 
-              echo "==== Fix YUM repo ===="
+              echo "==== Fix CentOS7 YUM repo ===="
               rm -f /etc/yum.repos.d/*.repo
               cat > /etc/yum.repos.d/CentOS-Vault.repo <<EOF
           [base]
@@ -56,26 +54,32 @@ jobs:
 
               echo "==== Install base deps ===="
               yum install -y \
-                curl tar gzip xz unzip rsync \
+                curl tar gzip xz unzip rsync ca-certificates \
                 gcc gcc-c++ make findutils which \
-                glibc libstdc++ ncurses-libs
+                glibc libstdc++ ncurses-libs \
+                openssl-devel curl-devel expat-devel zlib-devel perl-devel \
+                perl-ExtUtils-MakeMaker
 
-              echo "==== Install Git 2.x (IUS) ===="
-              yum install -y epel-release || true
-              yum install -y https://repo.ius.io/ius-release-el7.rpm
-              yum remove -y git || true
-              yum install -y git224 git224-core git224-perl-Git || yum install -y git224
+              echo "==== Build Git 2.x from source ===="
+              cd /tmp
+              curl -L -o git.tar.gz https://github.com/git/git/archive/refs/tags/v2.44.0.tar.gz
+              tar xzf git.tar.gz
+              cd git-2.44.0
 
-              ln -sf /usr/bin/git2.24 /usr/local/bin/git || true
+              make configure
+              ./configure --prefix=/usr/local
+              make -j"$(nproc)" all
+              make install
+
               export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
-
               git --version
 
               echo "==== Install Neovim ===="
-              curl -L -o /tmp/nvim.tar.gz \
+              cd /tmp
+              curl -L -o nvim.tar.gz \
                 https://github.com/neovim/neovim-releases/releases/download/v0.11.7/nvim-linux-x86_64.tar.gz
 
-              tar xzf /tmp/nvim.tar.gz -C /opt
+              tar xzf nvim.tar.gz -C /opt
               export PATH="/opt/nvim-linux-x86_64/bin:$PATH"
 
               nvim --version
@@ -89,7 +93,7 @@ jobs:
 
               mkdir -p "$XDG_CONFIG_HOME/nvim"
 
-              echo "==== Copy config ===="
+              echo "==== Copy Neovim config ===="
               rsync -a /work_dir/ "$XDG_CONFIG_HOME/nvim/" \
                 --exclude ".git" \
                 --exclude ".github" \
@@ -97,16 +101,16 @@ jobs:
                 --exclude "nvim-linux-x86_64*" \
                 --exclude "*.tar.gz"
 
-              echo "==== Install plugins ===="
+              echo "==== Install Lazy plugins ===="
               export NVIM_LAZY_NO_FILTER=1
               git config --global protocol.version 2
 
               nvim --headless "+Lazy! sync" +qa
 
-              echo "==== Build treesitter ===="
+              echo "==== Build Tree-sitter parsers ===="
               nvim --headless "+TSUpdateSync" +qa || true
 
-              echo "==== Package ===="
+              echo "==== Package bundle ===="
               mkdir -p /work_dir/dist
               cd "$HOME"
 
@@ -120,7 +124,6 @@ jobs:
               echo "Build completed successfully."
             '
 
-      # 3. 上传 Artifact（CI 下载用）
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -128,7 +131,6 @@ jobs:
           path: dist/lazynvim-centos7-bundle.tar.gz
           retention-days: 5
 
-      # 4. 发布 Release（打 tag 时）
       - name: Upload Release Asset
         if: startsWith(github.ref, 'refs/tags/')
         env:
