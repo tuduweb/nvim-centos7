@@ -15,9 +15,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. 拉代码
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # 2. CentOS7 构建
       - name: Build Full Package in CentOS7
         run: |
           docker run --rm \
@@ -27,6 +29,7 @@ jobs:
             /bin/bash -lc '
               set -euo pipefail
 
+              echo "==== Fix YUM repo ===="
               rm -f /etc/yum.repos.d/*.repo
               cat > /etc/yum.repos.d/CentOS-Vault.repo <<EOF
           [base]
@@ -51,16 +54,24 @@ jobs:
               yum clean all
               yum makecache fast
 
+              echo "==== Install base deps ===="
               yum install -y \
                 curl tar gzip xz unzip rsync \
                 gcc gcc-c++ make findutils which \
                 glibc libstdc++ ncurses-libs
 
-              yum install -y https://packages.endpointdev.com/endpoint-rpmsign-7L-1.el7.noarch.rpm
-              yum install -y git
+              echo "==== Install Git 2.x (IUS) ===="
+              yum install -y epel-release || true
+              yum install -y https://repo.ius.io/ius-release-el7.rpm
+              yum remove -y git || true
+              yum install -y git224 git224-core git224-perl-Git || yum install -y git224
+
+              ln -sf /usr/bin/git2.24 /usr/local/bin/git || true
+              export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
 
               git --version
 
+              echo "==== Install Neovim ===="
               curl -L -o /tmp/nvim.tar.gz \
                 https://github.com/neovim/neovim-releases/releases/download/v0.11.7/nvim-linux-x86_64.tar.gz
 
@@ -69,6 +80,7 @@ jobs:
 
               nvim --version
 
+              echo "==== Setup XDG env ===="
               export HOME=/root
               export XDG_CONFIG_HOME="$HOME/.config"
               export XDG_DATA_HOME="$HOME/.local/share"
@@ -77,6 +89,7 @@ jobs:
 
               mkdir -p "$XDG_CONFIG_HOME/nvim"
 
+              echo "==== Copy config ===="
               rsync -a /work_dir/ "$XDG_CONFIG_HOME/nvim/" \
                 --exclude ".git" \
                 --exclude ".github" \
@@ -84,13 +97,16 @@ jobs:
                 --exclude "nvim-linux-x86_64*" \
                 --exclude "*.tar.gz"
 
+              echo "==== Install plugins ===="
               export NVIM_LAZY_NO_FILTER=1
+              git config --global protocol.version 2
 
               nvim --headless "+Lazy! sync" +qa
 
-              # Tree-sitter 有些 parser 可能失败，不希望整个包失败可加 || true
+              echo "==== Build treesitter ===="
               nvim --headless "+TSUpdateSync" +qa || true
 
+              echo "==== Package ===="
               mkdir -p /work_dir/dist
               cd "$HOME"
 
@@ -104,6 +120,7 @@ jobs:
               echo "Build completed successfully."
             '
 
+      # 3. 上传 Artifact（CI 下载用）
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -111,6 +128,7 @@ jobs:
           path: dist/lazynvim-centos7-bundle.tar.gz
           retention-days: 5
 
+      # 4. 发布 Release（打 tag 时）
       - name: Upload Release Asset
         if: startsWith(github.ref, 'refs/tags/')
         env:
